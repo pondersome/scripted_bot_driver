@@ -30,6 +30,7 @@ setup(
             'stop = scripted_bot_driver.stop:main',
             'move_parent = scripted_bot_driver.move_parent:main',
             'scripted_mover = scripted_bot_driver.scripted_mover:main',
+            'rotate = scripted_bot_driver.rotate:main', 
         ],
     },
 )
