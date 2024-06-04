@@ -2,118 +2,117 @@
 
 import sys
 import time
-from math import radians, isclose
+from math import pow, sqrt, radians, degrees, isclose
+
 
 import rclpy
-from rclpy.action import ActionServer
-from rclpy.node import Node
 
 from scripted_bot_driver.move_parent import MoveParent
 from scripted_bot_interfaces.msg import RotateDebug
-from geometry_msgs.msg import Twist
 
-class Rotate(MoveParent):
+
+class RotateOdom(MoveParent):
     def __init__(self):
         super().__init__('rotate')
 
         # Publisher for debug data
         self.debug_msg = RotateDebug()
         self.debug_pub = self.create_publisher(RotateDebug, 'rotate_debug', 10)
+        
+        self.target_heading = 0.0
+        self.rotation_speed = 0.0
+        self.current_heading = 0.0
+        self.initial_heading = 0.0
+        self.delta_rotation = 0.0
 
     def parse_argv(self, argv):
         self.get_logger().info('parsing move_spec {}'.format(argv))
         self.run_once = True
-        self.target_heading = None
-        self.rate = None
+        self.delta_odom = 0.0
+        
 
-        if len(argv) < 1 or len(argv) > 2:
-            self.get_logger().fatal('Incorrect number of args given to Rotate: {}'.format(len(argv)))
+        if (len(argv) != 1 and len(argv) != 2):
+            self.get_logger().fatal('Incorrrect number of args given to RotateOdom: {}'.format(len(argv)))
             return -1
 
         try:
-            self.target_heading = float(argv[0])  # first arg is the target heading
-            self.target_heading = radians(self.target_heading)  # convert degrees to radians
+            self.target_heading = float(argv[0])  # pick off first arg from supplied list
+            if self.distance < 0:
+                self.distance = -self.distance  # distance is always +ve
+                self.speed = -self.speed        # go backward
+                self.debug_msg.distance = self.distance
 
-            # optional second arg is the rate of rotation
+            # a supplied speed argument overrides everything
             if len(argv) == 2:
-                self.rate = float(argv[1])
-                self.get_logger().info('Using supplied rate {}'.format(self.rate))
-            else:
-                self.rate = radians(30)  # default rate: 30 degrees/sec in radians
+                self.speed = float(argv[1])
+                self.get_logger().info('Using supplied speed {}'.format(self.speed))
         except ValueError:
             self.get_logger().error('Invalid argument given: {}'.format(argv))
             return -1
-        return len(argv)  # return number of args consumed
+        return len(argv)            # return number of args consumed
 
     def print(self):
-        self.get_logger().info('Rotate to heading {} radians at rate: {} rad/s'.format(self.target_heading, self.rate))
+        self.get_logger().info('Drive straight with odometry for {} m at speed: {}'.format(self.distance, self.speed))
 
+    # run is called at the rate until it returns true. It does not stop motion on
+    # completion - caller is responsible for stopping motion.
     def run(self):
         if not self.is_odom_started():
             self.get_logger().error('ERROR: robot odometry has not started - exiting')
             return True
 
         if self.run_once:
-            self.initial_yaw = self.get_current_yaw()
-            self.target_yaw = self.initial_yaw + self.target_heading
-            self.get_logger().info('Initial yaw: {}, target yaw: {}'.format(self.initial_yaw, self.target_yaw))
-            self.debug_msg.initial_yaw = self.initial_yaw
+            self.initial_x = self.odom.pose.pose.position.x
+            self.initial_y = self.odom.pose.pose.position.y
+            self.get_logger().info('Initial X-Y: {} {}, goal distance: {}'.format(self.initial_x, self.initial_y, self.distance))
+            self.debug_msg.initial_x = self.initial_x
+            self.debug_msg.initial_y = self.initial_y
             self.run_once = False
 
-        current_yaw = self.get_current_yaw()
-        yaw_error = self.target_yaw - current_yaw
-        self.get_logger().info('Current yaw: {}, Yaw error: {}'.format(current_yaw, yaw_error))
+        delta_x = self.odom.pose.pose.position.x - self.initial_x
+        delta_y = self.odom.pose.pose.position.y - self.initial_y
+        self.delta_odom = sqrt(pow(delta_x, 2) + pow(delta_y, 2))
+        self.get_logger().info('delta_x: {} delta_y: {} delta_odom: {}'.format(delta_x, delta_y, self.delta_odom))
 
-        if isclose(yaw_error, 0, abs_tol=radians(1)):  # Consider as reached if within 1 degree
-            self.get_logger().info('Reached target yaw: {}'.format(current_yaw))
+        if (self.delta_odom > self.distance):
+            self.get_logger().info('traveled: {} m'.format(self.delta_odom))
             return True
 
-        # calculate the rotation command
-        angular_z = self.slew_rot(self.rate if yaw_error > 0 else -self.rate)
-        self.send_move_cmd(0.0, angular_z)
-
+        # accelerate to full speed as long as we haven't reached the goal
+        self.send_move_cmd(self.slew_vel(self.speed), self.slew_rot(0.0))
+        
         # publish debug data
-        self.debug_msg.current_yaw = current_yaw
-        self.debug_msg.yaw_error = yaw_error
-        self.debug_msg.commanded_angular = angular_z
+        self.debug_msg.delta_odom = self.delta_odom
+        self.debug_msg.speed = self.speed
+        self.debug_msg.commanded_linear = self.commandedLinear
+        self.debug_msg.commanded_angular = self.commandedAngular
         self.debug_pub.publish(self.debug_msg)
 
         return False
 
-    def get_current_yaw(self):
-        # Extract the current yaw from the odometry
-        quaternion = self.odom.pose.pose.orientation
-        _, _, yaw = self.euler_from_quaternion(quaternion)
-        return yaw
-
     def start_action_server(self):
-        self.create_action_server('rotate')
+        self.create_action_server('rotate_odom')
 
     def get_feedback(self):
-        text_feedback = 'Rotating at {}, yaw error: '.format(self.rate)
-        progress_feedback = self.target_yaw - self.get_current_yaw()
+        text_feedback = 'Driving straight at {}, progress: '.format(
+            self.commandedLinear)
+        progress_feedback = self.delta_odom
         return text_feedback, progress_feedback
 
     def finish_cb(self):
         # clean up after a move and reset defaults for next move
         self.set_defaults()
 
-        results = [self.target_yaw]
+        results = [self.delta_odom]
         return results
 
-    @staticmethod
-    def euler_from_quaternion(quat):
-        # Convert quaternion to euler angles
-        import tf_transformations
-        return tf_transformations.euler_from_quaternion([quat.x, quat.y, quat.z, quat.w])
-
     def usage():
-        print('Usage: rotate.py <target_heading> [rate] - rotate to the specified heading in degrees, with optional rate in degrees/sec')
+        print('Usage: rotate.py <distance> [speed] - drive the specified distance forward or backward, with optional speed')
         sys.exit()
 
 def main():
     rclpy.init()
-    nh = Rotate()
+    nh = RotateOdom()
     nh.start_action_server()
     nh.start_spin_thread()
 

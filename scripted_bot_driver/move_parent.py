@@ -60,11 +60,11 @@ class MoveParent(Node):
         self.cmd_vel_pub.publish(self.move_cmd)
 
     def slew_vel(self, to):
-        #return self.slew(self.odom.twist.twist.linear.x, to, vel_slew_rate)
+        # return self.slew(self.odom.twist.twist.linear.x, to, vel_slew_rate)
         return self.slew(self.commandedLinear, to, vel_slew_rate)
 
     def slew_rot(self, to):
-        #return self.slew(self.odom.twist.twist.angular.z, to, rot_slew_rate)
+        # return self.slew(self.odom.twist.twist.angular.z, to, rot_slew_rate)
         return self.slew(self.commandedAngular, to, rot_slew_rate)
 
     def slew(self, current, to, slew_rate):
@@ -95,7 +95,7 @@ class MoveParent(Node):
         while(self.stop_thread_flag == False and rclpy.ok()):
             rclpy.spin_once(self, timeout_sec=0.01)
             if (self.stop_thread_flag):
-                self.get_logger().debug('Node %s spinner shutting down'%(self.node_name))
+                self.get_logger().debug('Node %s spinner shutting down' % (self.node_name))
                 return
 
     def start_spin_thread(self):
@@ -110,15 +110,14 @@ class MoveParent(Node):
             self.feedback_msg.progress))
         self._goal_handle.publish_feedback(self.feedback_msg)
 
-
     # handle the goal by parsing the move_spec
     def goal_callback(self, goal_request):
-        if (not self.is_odom_started()):
+        if not self.is_odom_started():
             # odom not started - return abort
             self.get_logger().error('stop action failed - odometry not running')
             return GoalResponse.REJECT
         # parse the move_spec specified in the goal
-        if (self.parse_argv(goal_request.move_spec) < 0):
+        if self.parse_argv(goal_request.move_spec) < 0:
             # parsing args failed - return abort
             self.get_logger().error('action failed parsing move_spec')
             return GoalResponse.REJECT
@@ -143,16 +142,16 @@ class MoveParent(Node):
 
         # call the run callback in a loop to perform the move
         try:
-            while (rclpy.ok()):
+            while rclpy.ok():
                 if self.run():
                     break
                 loop_count += 1
-                if ((loop_count % feedback_period) == 0):
+                if (loop_count % feedback_period) == 0:
                     text_feedback, progress_feedback = self.get_feedback()
                     self.send_feedback(text_feedback, progress_feedback)
                 time.sleep(loop_period)
         except Exception as e:
-            self.get_logger().error(e)
+            self.get_logger().error(str(e))
 
         move_results = self.finish_cb()
         goal_handle.succeed()
@@ -174,9 +173,9 @@ class MoveParent(Node):
             action_name,
             execute_callback=self.call_exec_cb,
             goal_callback=self.goal_callback,
-            #handle_accepted_callback=self.handle_accepted_callback,
-            #cancel_callback=self.cancel_callback,
-            #callback_group=ReentrantCallbackGroup()
+            # handle_accepted_callback=self.handle_accepted_callback,
+            # cancel_callback=self.cancel_callback,
+            # callback_group=ReentrantCallbackGroup()
         )
 
     def shutdown(self):
